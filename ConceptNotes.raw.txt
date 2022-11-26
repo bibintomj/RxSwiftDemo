@@ -1,0 +1,432 @@
+
+RxSwift
+
+Observables (Publishers) = Sequence = can emit new values
+    Things can subscribe to this and get emitted values over time.
+    eg. Slider values emitted conitnuesly can be captured by some subscriber.
+    Please NOTE: You will only get values emitted during initialization. 
+    New values cannot be emitted except if its created with .create().
+    .create function is usually used to create your own observables.
+
+    Basic Observable creation
+        let obs = Observable.just(1)
+        let obs2 = Observable.of(1, 2, 3)
+        The type of both of these are same Observable<Int>. Difference is, .of will emit each values one by one.
+
+        Observable.of([1,2,3]) => type is Observable<[Int]> 
+        Observable.from([1,2,3]) => type is Observable<Int> IMPORTANT
+
+        .of and .from are different.
+        .of = returns an observable with whatever is passed as parameter.
+        .from = accepts sequence/array. returns an observable with type of the single element in the array.
+
+        .of(1,2,3) is same as .from([1,2,3])
+
+        There are other observables, that never completes and EmptyObservebles etc
+        You can give a value to observable to emit values too.
+
+Subscribing to Observables
+        1. subscribe
+            let obs4 = Observable.from([1,2,3])
+            obs4.subscribe { event in
+                print(event)
+            }
+
+            subscribe closure gets called for each of the values.
+            the recieved object is next event.
+            Next event is an object/function that just tells what is the event that is emitted.
+            event could be a 'Next' event, or a completed event.
+            'event.element' may contain the encapsulated value.
+
+            Above code will print
+                next(1)
+                next(2)
+                next(3)
+                completed
+
+
+            let obs3 = Observable.of([1,2,3])  <= NOTE: its .of
+            obs3.subscribe { event in
+                print(event)
+            }
+
+            Output: 
+                next([1,2,3])
+                completed
+
+        2. subscribe(onNext: , onError: , onCompleted: , onDisposed: )
+            use onNext: to get element alone. completed will be recieved in a seperate closure onCompleted: ().
+            
+            obs4.subscribe(onNext: { element in
+                print(element)
+            }, onError: {}, onCompleted: {}, onDisposed: {})
+
+Disposing & Terminating - DisposeBag (Cancellable)
+    when a subscriber subscribes to an observable (Publisher), it returns a subscription object (subscription pipeline). 
+    We need to setup a dispose mechanism for subscription, so that when parent is deallocated, the subscription is also deallocated as well. (to avoid memory leaks)
+
+    you can dispose a bag manually by calling.
+
+    subscription.dispose() // But calling it manually is not a good practice. Use DisposeBag or takeuntil operator.
+
+    OR create a dispose bag and assign it.
+
+    Creating DisposeBag
+        let bag = DisposeBag()
+        let bag = DisposeBag.create()
+    
+    When working with multiple observables, its better to use a dispose bag (or cancellable), so that when the time comes, its automatically disposed.
+
+    let subscription = obs4.subscribe(onNext: { element in
+        print(element)
+    })
+    .disposed(by: disposeBag)
+
+    OR
+
+    let subscription = 
+    obs4
+    .take(until: self.rx.deallocated)           <= when self is deallocated, this pipeline will also be deallocated.
+    .subscribe(onNext: { element in
+        print(element)
+    })
+
+        
+
+    Another method to create subscription
+        Observable<String>.create { obs in       <= created observer with given type String
+            obs.onNext("A")                      <= Manually emitting next event with value "A"
+            obs.onCompleted()                    <= emits completed event
+
+            return Disposables.create()           <= while using this method to create observer, you need to return DisposeBag.
+        }
+        .subscribe( onNext: { print($0) }, 
+                    onError: { print($0) }, 
+                    onCompleted: { print("Completed") }
+                    onDisposed: { print("Disposed") }
+        )
+        .disposed(by: disposeBag)
+        
+Subjects = (Observable + Observer)
+    They can subscribe to an observable and allow others to subscribe to themselves. They can emit values themselves. 
+    eg. NewPaper Distributors. When they recieve an new issue of newspaper, they distribute it to thier subscribers.
+
+    Types of Subjects
+        1. PublishSubject
+            let subject = PublishSubject<String>() // No initial value can be passed to begin
+            subject.onNext("Emit 1") // NOTE: Nothing gets printed. Cuz, subscription is after the value is emitted.
+            subject.subscribe { event in
+                print(event) 
+            }
+
+            subject.onNext("Emit 2") // This will get printed cuz its emitting after the subscription.
+
+            subject.dispose() // Disposed subscription
+
+            subject.onNext("Emit 3") // Wont be printed cuz, subscription is disposed.
+
+            On an observable, after the values are emitted, 'completed' event is fired automatically. But if its a subject, it is not automatic. We have to manually call.
+
+            IF, instead of dispose(), if we call subject.onCompleted(), then completed event gets emitted immediatly and no future values are emitted. This is same functionality as dispose but completed event gets fired. NOTE: if a subscription is disposed(), then calling onCompleted() on it, doesnt do anything.
+
+            You will only get values that gets emitted after your subscription. You wont recieve previous values.
+            You can have multiple subcribers to a single Subject and they will all get the emit values.
+
+            Subscribe to an Observable as a PublishSubject
+                
+                let obs = Observable.just("SomeString")
+                obs.subscribe(subject)
+                    .disposed(by: disposeBag)
+
+                This code will pass on all the events from observable to the subject. This means, emitted values and the completed events as well. Therefore any emits after this wont be procesed. NOTE: PublishSubject doesnt call onComplete on its own. but when linked to an observable(that emits completed event own its own), the PublishSubject also gets completed.
+
+        2. BehaviorSubject
+            Same as PublishSubject. But needs initial value during initialization.
+            The reason is, at any point, when u subscribe to it, it will give you the last value. So it needs to start with and initial value. Notice the difference between Observable, PublishSubject and BehaviourSubject.
+            Observable = when subscibed, gives all the values(one by one) specified during its initialization.
+            PublishSubject = No initial values. Nothing happens when subscribed. But recieves values emitted after subscription.
+            BehaviorSubject = Initial Value needed. When subscribed, recieves the last value that was emitted.
+            ReplaySubject = No Initail value. But needs buffer size. When subscribed, recieves n latest values based on buffer count.
+            Variable = Wrapper over BehaviourSubject. Needs initial value. Holds on the value. all changes are emitted to subscribers.
+            BehaviourRelay = Replacement of Variable. Needs initial value. Holds on to the value. Value Can be changed via .accept func.
+            In other words, think of it like, it holds on to the last value it recieved. Gives it to a new subscriber. Note: It emits last value only to new subscriber. When a new subscriber comes, last value doesnt emitted to old subscribers.
+
+            let subject = BehaviorSubject(value: "Emit 1")
+            subject.onNext("Emit 2")
+            subject.subscribe(onNext: {
+                print($0) // Prints Emit 2.
+            })
+            subject.onNext("Emit 3")
+
+            Output:
+                Emit 2
+                Emit 3
+
+            Here subject does emit both initial value(Emit 1) and onNext value (Emit 2). But since the subcribtion was after all the emits, it recives only the last object (Emit 2). Notice completed is not called automatically.
+
+
+        3. ReplaySubject
+            ReplaySubject is similar to BehaviorSubject. Difference is we can specify the number(buffer) of previous events that a new subscriber should recieve. NOTE: We can also create a ReplaySubject with infinite size (createUnbounded); but only use if its necessary, cuz of the memory pileup/leak.
+            BehaviorSubject = ReplaySubject with buffer 1.
+
+            let subject = ReplaySubject<String>.create(bufferSize: 2)
+            let subject = ReplaySubject<String>.createUnbounded()
+
+        4. Variable (Deprecated)
+            'Variable' is a wrapper around BehaviorSubject. But it stores the value in a seperate state .value property.
+            Since it uses BS, it needs an initial value. This .value can be changed later.
+            Everytime the value is changed, these values will also be emitted to the subscribers.
+            .value could also be an array. and when a CRUD happens in the array, new array will be emitted.
+
+            let variable = Variable("Emit 1")
+            variable.value = "Emit 2"
+            variable.subscribe {
+                print($0)
+            }
+
+        5. BehaviourRelay (Part of RxCocoa (Not RxSwift). Use this instead of `Variable`)
+            Needs Initial value. All changes replaces existing value. and New value is emitted.
+
+            let relay = BehaviourRelay(value: "Initail Value")
+            relay.asObservable()
+            .subcribe { print($0)
+            }
+
+            To change the value, you cant use .value, cuz its read only.
+            Use .accept(:) to change the value
+            relay.accept("New Value") // This will emit new value to subscribers
+
+
+            If the value is an array, and you want to append an item to it, there are no inbuild ways.
+            You need to pass in the full updated array.
+            relay.accept(relay.value + ["New Value"])
+
+Why use .asObservable()
+    private let selectedPhotoSubject: PublishSubject<UIImage> = .init()
+    var selectedPhotoObservable: Observable<UIImage> {
+        selectedPhotoSubject.asObservable()
+    }
+
+    This setup restricts all changes to 'subject' from exteral classes and also allows exteral class to get the value via an Observable (selectedPhotoObservable).
+
+Filtering Operators
+    .ignoreElements() - Ignores next events; passes in completed or error events. Used usually when you want to observe, but only care about getting completed status.
+
+    .elementAt(index:) - Ignores all element except the element at index. eg. if 2 is passed as index, only 2nd index next event (ie, third item. index starts from 0) will be recieved.
+
+    .filter() - works just like Swift's filter works. eg. .filter { $0 < 3 }
+
+    .skip() - few variations of this. Bypasses
+        1. specified number of elements. (Please NOTE: here its count. not index. so it doesNOT start from zero.)
+        2. until another observable emits a next event.
+        3. skipWhile: until a cetain condition is true (acts like while loop). Once the condition becomes false, then on all values will pass through EVEN IF the subsequent values doesNOT satisfy the while condition.
+        4. till a specified time interval
+
+    .take() - 
+        1. take(count) - passes the specified number of items from start
+        2. takeLast(count) - passes in specified number of items from last. Please note, on completed must be called for this to work
+        3. takeUntil(condition) - Passes until another observable/subject emits next event.
+        4. takeWhile(condition) - opposite of skip. Passes until a conditon is true. When false, all values after it is ignored, even if any of the subsequent values passes the condition as true.
+        5. takeFor(timeInterval) - Takes value until specified time
+
+Transforming Operators
+    .toArray() - captures & stores all emitted values. Then passes it down as an array, to subscriber when 'complete' event is fired. NOTE: it waits until 'complete' event is recieved to pass down the values as array.
+    
+    .map() - use to transform next event element. Use this to pass down data by modifying or generating new data based on incoming element.
+
+    .flatMap() - Hard to understand
+    - input = can be any type
+    - output = must be an observable
+        eg: struct Student {
+                var score: BehaviorRelay<Int>
+            }
+    - flatMap automatically adds a subscribtion to the observable that will be returned, and passes the element (only value) down the pipeline.
+    - If there is any change in any of the observable returned by flatmap, the subscriber gets notified.
+    - Therefore, subscriber gets new value every time, when original subject emits AND when the observable returned in flatmap changes.
+    - Difference between .map & .flatMap is,
+        - map can have any input types. Modifies the values. Returns any type. But flatMap also can have any input types, but must return an Observable.
+        - map doesNOT add subcribtions to anything; .map just passes down processed value. But flatMap does.
+    
+Combining Operators
+    startsWith(value) - The first value emitteed will be the passed in parameter. 
+        2,3,4 -> startsWith(1) -> 1,2,3,4
+        let numbers = Observable.of(2,3,4)
+        numbers.startsWith(1)
+        .subscribe { print($0.value) }
+
+    concat - joins 2 sequences to new combined sequence.
+        1,2,3 and 5,6,7 -> concat -> 1,2,3,5,6,7
+        Concat only happens when first sequence is completed. Else it will wait for it to complete. 
+        All emits of 2nd sequence is ignored and lost until first is completed.
+        Once 1st sequence is completed, all the emits of 2nd after completion of 1st will be recived.
+        Everyting before completion is lost.
+
+            
+            let first = PublishSubject<Int>()
+            let second = Observable.of(5,6,7)
+
+            let observable = Observable.concat([first, second])
+
+            observable.subscribe(onNext: {
+                print($0)
+            })
+            .disposed(by: disposeBag)
+
+            first.onNext(1)
+            first.onNext(2)
+            first.onNext(3)
+            first.onCompleted()
+
+        Output: 1 2 3 5 6 7
+
+    merge
+        merges 2 sequences. The order of merge will be first come first emit.
+            let left: PublishSubject<Int> = .init()
+            let right: PublishSubject<Int> = .init()
+
+            Observable.merge(left, right)
+                .subscribe(onNext: {
+                    print($0)
+                })
+
+            left.onNext(1)
+            right.onNext(2)
+            left.onNext(3)
+            right.onNext(4)
+            left.onNext(5)
+
+        Output = 1,2,3,4,5
+
+    combineLatest - a bit complex.
+        takes in 2 sequences and emits a tuple with latest values from both sequences.
+        1...2...3 and ..4...5.. -> (1,4), (2,4), (2,5), (3,5)
+
+        Please note, subcriber will get the value, when both values present. 
+        All the emits of first sequence will be ignored until, second sequence emits once.
+
+        Eg. For validating password and confirm password field. Both fields needs to be present for validation.
+
+            let left: PublishSubject<Int> = .init()
+            let right: PublishSubject<String> = .init()
+
+            Observable.combineLatest(left, right)
+                .subscribe(onNext: {
+                    print($0.0, $0.1)
+                })
+            left.onNext(1)
+            left.onNext(2)
+            right.onNext("A")
+            right.onNext("B")
+            left.onNext(3)
+        
+        Output:
+            2 A
+            2 B
+            3 B
+    
+    withLatestFrom - used mostly with UI
+        eg. Button Taps withLatest from textField
+
+            let button: PublishSubject<Void> = .init() // using a publishSubject to emulate button events.
+            let textfield: PublishSubject<String> = .init() // using a publishSubject to emulate textField events.
+
+            button.withLatestFrom(textfield)
+                .subscribe(onNext: {
+                    print($0)
+                })
+                .disposed(by: disposeBag)
+
+            textfield.onNext("Sw")
+            textfield.onNext("Swif")
+            textfield.onNext("Swift")
+
+            button.onNext(())
+            button.onNext(())
+            textfield.onNext("Swift 5.5")
+            button.onNext(())
+        
+        Output:
+            Swift  Swift  Swift 5.5
+        
+    Reduce
+        Similar to reduce in Swift. Takes in sequences, reduces it to a new value. And emits the final value to subscriber. 
+        Note: onComplete has to be fired. Needs initial(starting value) value (also called seed).
+        eg.
+            reduce(0) { total, new -> Int in   
+                return total + new
+            }
+
+                let subject: PublishSubject<Int> = .init()
+
+                subject.reduce(0, accumulator: +)
+                    .subscribe(onNext: {
+                        print($0)
+                    })
+
+                subject.onNext(1)
+                subject.onNext(2)
+                subject.onNext(3)
+                subject.onNext(4)
+                subject.onCompleted()
+
+            Output: 10
+
+    Scan
+        Similar to reduce. But it emits reduced value for each value in sequence. But reduce only emits final value.
+        
+        subject.scan(0, accumulator: +)
+        .subscribe(onNext: {
+            print($0)
+        })
+
+        1,2,3,4   ->  Output => 1,3,6,10
+        
+RxCocoa
+    For every UI element, there is an Rx wrapper. 
+        eg. label.rx, texfield.rx etc
+
+Control Property & Driver
+    Control Property means properties inside a control 
+    Control = UIControl = UIElements = Button, labels, textfield etc.
+    .`. Control Propery = button.title, label.text, textfield.text
+
+    Control Events
+        .editingDidEndOnExit, .touchUpInside
+    
+    Driver - A special type of Observable intended for UI binding.
+        Units cant error out
+        Subscribed & observed on main Scheduler. So no need to explicitly specify main scheduler.
+        shares sideeffects
+
+        to convert any observable to driver, use .asDriver()
+        if the sequence can propagate an error event, then you have to specify default element.
+        then the function will be .asDriver(onErrorJustReturn: Element) // have to specify default element if it errors out.
+        If the sequence cannot propgate error event (meaning the emitting observable cannot emit error), the only .asDriver() will show up.
+
+        And for binding the new driver sequence to UI, use .drive(label.rx.text) instead of .bind(to: label.rx.text)
+
+    Signal - Similar to Signal, but rarely used.
+
+Disposing RxCocoa
+    Just like ARC keywords like weak, unowned used inside closures, RxSwift also has same keywords.
+        
+        Nothing: No need to specify anything if self is a singleton, or self is a VC that will never deinit. 
+        unowned: For properties, Inside all VC, which are relesed after closure task is performed.
+        weak: any other case
+
+Error Handling
+    - one method is to catch error and return some default value .catchErroJustReturn(Element)
+    - Another method is to retry incase of error.
+
+    URLRequest.load(resource: resource)
+            .observe(on: MainScheduler.instance)
+            .retry(3)
+            .catch { error -> Observable<[User]> in
+                print(error.localizedDescription)
+                return Observable.just([])
+            }
+            .bind(to: self.userModelRelay)
+            .disposed(by: disposeBag)
+
+    .retry(attemptsCount):
+        If an error reaches this operator, it will initiate the pipeline flow again from the begining(ie, from the observable emit).
